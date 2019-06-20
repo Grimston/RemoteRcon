@@ -3,12 +3,18 @@ using System.Threading;
 using Newtonsoft.Json;
 using WebSocketSharp;
 
+
 namespace Oxide.Plugins
 {
-    [Info("RemoteRcon", "Grimston", "0.0.1")]
+    [Info("RemoteRcon", "Grimston", "0.0.2")]
     [Description("API to execute remote rcon commands to other servers.")]
     class RemoteRcon : CovalencePlugin
     {
+        void Init()
+        {
+            Connection.OnLog += (sender, s) => { Puts(s); };
+        }
+
         [ConsoleCommand("ExecuteCommand")]
         [Help("Lets you run RCON commands on remote servers.")]
         void ExecuteCommand(string url, int port, string password, string command)
@@ -37,6 +43,8 @@ namespace Oxide.Plugins
 
         #endregion
 
+        public static event EventHandler<string> OnLog;
+
         #region Methods
 
         public static string ConnectionString(string address, int port, string password)
@@ -55,7 +63,7 @@ namespace Oxide.Plugins
             }
             catch (Exception e)
             {
-                Puts(e.Message);
+                OnLog?.Invoke(null, e.Message);
             }
         }
 
@@ -63,11 +71,11 @@ namespace Oxide.Plugins
         {
             if (webSocket == null)
             {
-                Puts("Can't connect, WebSocket is null");
+                OnLog?.Invoke(null, "Can't connect, WebSocket is null");
                 return;
             }
 
-            Puts("WebSocket connecting");
+            OnLog?.Invoke(null, "WebSocket connecting");
             webSocket.ConnectAsync();
         }
 
@@ -78,11 +86,11 @@ namespace Oxide.Plugins
             if (webSocket.ReadyState == WebSocketState.Open)
             {
                 webSocket.SendAsync(packet, null);
-                Puts("Packet sent: " + packet);
+                OnLog?.Invoke(null, "Packet sent: " + packet);
             }
             else
             {
-                Puts("WebSocket connection not ready, not sending packet");
+                OnLog?.Invoke(null, "WebSocket connection not ready, not sending packet");
             }
         }
 
@@ -92,17 +100,17 @@ namespace Oxide.Plugins
 
         private static void OnClose(object sender, CloseEventArgs e)
         {
-            Puts("WebSocket connection closed: " + e.Reason);
+            OnLog?.Invoke(null, "WebSocket connection closed: " + e.Reason);
         }
 
         private static void OnError(object sender, ErrorEventArgs e)
         {
-            Puts(e.Message);
+            OnLog?.Invoke(null, e.Message);
         }
 
         private static void OnMessage(object sender, MessageEventArgs e)
         {
-            Response response = JsonConvert.DeserializeObject<Response>(e.Data);
+            var response = JsonConvert.DeserializeObject<Response>(e.Data);
 
             if (response.Identifier == -1 || string.IsNullOrWhiteSpace(response.Message))
                 return;
@@ -112,7 +120,7 @@ namespace Oxide.Plugins
 
         private static void OnOpen(object sender, EventArgs e)
         {
-            Puts("WebSocket connection opened");
+            OnLog?.Invoke(null, "WebSocket connection opened");
         }
 
         #endregion
