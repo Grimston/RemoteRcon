@@ -1,156 +1,228 @@
 using System;
-using System.Threading;
-using Newtonsoft.Json;
+using System.Linq;
+using Oxide.Core.Libraries.Covalence;
 using WebSocketSharp;
 
 
 namespace Oxide.Plugins
 {
-    [Info("RemoteRcon", "Grimston", "0.0.2")]
+    [Info("RemoteRcon", "Grimston", "0.0.6")]
     [Description("API to execute remote rcon commands to other servers.")]
     class RemoteRcon : CovalencePlugin
     {
+        private WebSocket _webSocket;
+        private Configuration _config;
+
         void Init()
         {
-            Connection.OnLog += (sender, s) => { Puts(s); };
+            _config = Config.ReadObject<Configuration>();
         }
 
-        [ConsoleCommand("ExecuteCommand")]
-        [Help("Lets you run RCON commands on remote servers.")]
-        void ExecuteCommand(string url, int port, string password, string command)
+        protected override void LoadDefaultConfig()
         {
-            Connection.webSocket?.Close();
-
-            Connection.Initialise(Connection.ConnectionString(url, port, password));
-
-            Connection.Connect();
-
-            SpinWait.SpinUntil(() =>
-                Connection.webSocket.ReadyState != WebSocketState.Connecting &&
-                Connection.webSocket.ReadyState != WebSocketState.Closing);
-
-            var request = new Request(command);
-            Connection.Send(JsonConvert.SerializeObject(request));
+            Config.WriteObject(GetDefaultConfig(), true);
         }
-    }
 
+        private Configuration GetDefaultConfig()
+        {
+            return new Configuration
+            {
+                LogMessages = true,
+                RemoteServers = new[]
+                {
+                    new Configuration.RemoteServer()
+                    {
+                        Name = "Local",
+                        Address = "127.0.0.1",
+                        Port = "28016",
+                        Password = "YourSuperRconPassword"
+                    },
+                    new Configuration.RemoteServer()
+                    {
+                        Name = "Local_Duplicate",
+                        Address = "127.0.0.1",
+                        Port = "28016",
+                        Password = "YourSuperRconPassword"
+                    }
+                },
+                RemoteCommands = new[]
+                {
+                    new Configuration.RemoteCommand()
+                    {
+                        CommandName = "AddVIP",
+                        Servers = new[] {"Local", "Local_Duplicate"},
+                        Commands = new[]
+                        {
+                            "oxide.group add vip",
+                            "oxide.usergroup add {0} vip"
+                        }
+                    },
+                }
+            };
+        }
 
-    class Connection : IDisposable
-    {
-        #region Members
+        private string FilterCommand(string command, string[] args)
+        {
+            /**
+            var regex = new Regex(@"{(.*?)}/g");
 
-        public static WebSocket webSocket;
+            var matches = regex.Matches(command);
 
-        #endregion
+            foreach (Match match in matches)
+            {
+                //TODO: Process the command and create filters.
+            }
+            **/
 
-        public static event EventHandler<string> OnLog;
+            return string.Format(command, args);
+        }
 
-        #region Methods
-
-        public static string ConnectionString(string address, int port, string password)
-            => $"ws://{address}:{port}/{password}";
-
-        public static void Initialise(string url)
+        [Command("remotercon.storedexecute"), Permission("remotercon.storedexecute")]
+        void StoredExecute(IPlayer player, string command, string[] args)
         {
             try
             {
-                webSocket = new WebSocket(url);
+                if (!player.IsServer || !player.IsAdmin)
+                {
+                    return;
+                }
 
-                webSocket.OnOpen += OnOpen;
-                webSocket.OnMessage += OnMessage;
-                webSocket.OnError += OnError;
-                webSocket.OnClose += OnClose;
+                if (_config.LogMessages)
+                    Puts("Checking for stored command: {0}", args[0]);
+
+                var storedCommand = _config.RemoteCommands.First(remoteCommand => remoteCommand.CommandName == args[0]);
+
+                if (storedCommand == null) return;
+
+                if (_config.LogMessages)
+                    Puts("Command Exists, running now");
+                foreach (var storedServer in storedCommand.Servers)
+                {
+                    var identifier = 1000;
+                    var storedRemoteServer =
+                        _config.RemoteServers.First(remoteServer => remoteServer.Name == storedServer);
+
+                    using (_webSocket =
+                        new WebSocket(
+                            $"ws://{storedRemoteServer.Address}:{storedRemoteServer.Port}/{storedRemoteServer.Password}")
+                    )
+                    {
+                        _webSocket.Connect();
+
+                        var commandArguments = args.ToList();
+                        commandArguments.RemoveRange(0, 1);
+
+
+                        if (_webSocket.ReadyState == WebSocketState.Open)
+                        {
+                            foreach (var storedCommandCommand in storedCommand.Commands)
+                            {
+                                var filterCommand = Newtonsoft.Json.JsonConvert.SerializeObject(new RconPacket()
+                                {
+                                    Identifier = identifier,
+                                    Message = FilterCommand(storedCommandCommand, commandArguments.ToArray())
+                                });
+
+                                if (_config.LogMessages)
+                                    Puts("Sending: {0}", filterCommand);
+                                _webSocket.Send(filterCommand);
+
+                                identifier++;
+                            }
+                        }
+                        else
+                        {
+                            if (_config.LogMessages)
+                                Puts($"Unable to connect to server: '{storedServer}' Commands not executed.");
+                        }
+
+                        _webSocket.Close();
+                    }
+                }
             }
             catch (Exception e)
             {
-                OnLog?.Invoke(null, e.Message);
+                Puts(e.ToString());
             }
         }
 
-        public static void Connect()
+        [Command("remotercon.execute"), Permission("remotercon.execute")]
+        void ExecuteCommand(IPlayer player, string command, string[] args)
         {
-            if (webSocket == null)
+            try
             {
-                OnLog?.Invoke(null, "Can't connect, WebSocket is null");
-                return;
+                if (!player.IsServer || !player.IsAdmin)
+                {
+                    return;
+                }
+
+                using (_webSocket =
+                    new WebSocket(
+                        $"ws://{args[0]}:{args[1]}/{args[2]}")
+                )
+                {
+                    _webSocket.Connect();
+
+                    var commandArguments = args.ToList();
+                    commandArguments.RemoveRange(0, 1);
+
+                    if (_webSocket.ReadyState == WebSocketState.Open)
+                    {
+                        var parts = args.ToList();
+                        parts.RemoveRange(0, 3);
+
+                        var filterCommand = Newtonsoft.Json.JsonConvert.SerializeObject(new RconPacket()
+                        {
+                            Identifier = 1000,
+                            Message = string.Join(" ", parts)
+                        });
+
+                        if (_config.LogMessages)
+                            Puts("Sending: {0}", filterCommand);
+                        _webSocket.Send(filterCommand);
+                    }
+                    else
+                    {
+                        if (_config.LogMessages)
+                            Puts($"Unable to connect to server, commands not executed.");
+                    }
+
+                    _webSocket.Close();
+                }
             }
-
-            OnLog?.Invoke(null, "WebSocket connecting");
-            webSocket.ConnectAsync();
-        }
-
-        public static void Disconnect() => webSocket.CloseAsync();
-
-        public static void Send(string packet)
-        {
-            if (webSocket.ReadyState == WebSocketState.Open)
+            catch (Exception e)
             {
-                webSocket.SendAsync(packet, null);
-                OnLog?.Invoke(null, "Packet sent: " + packet);
+                Puts(e.ToString());
             }
-            else
+        }
+
+        private class RconPacket
+        {
+            public int Identifier;
+            public string Message;
+            public string Name = "WebRcon";
+        }
+
+        private class Configuration
+        {
+            internal class RemoteCommand
             {
-                OnLog?.Invoke(null, "WebSocket connection not ready, not sending packet");
+                public string CommandName;
+                public string[] Servers;
+                public string[] Commands;
             }
+
+            internal class RemoteServer
+            {
+                public string Name;
+                public string Address;
+                public string Port;
+                public string Password;
+            }
+
+            public bool LogMessages;
+            public RemoteServer[] RemoteServers;
+            public RemoteCommand[] RemoteCommands;
         }
-
-        #endregion
-
-        #region Events
-
-        private static void OnClose(object sender, CloseEventArgs e)
-        {
-            OnLog?.Invoke(null, "WebSocket connection closed: " + e.Reason);
-        }
-
-        private static void OnError(object sender, ErrorEventArgs e)
-        {
-            OnLog?.Invoke(null, e.Message);
-        }
-
-        private static void OnMessage(object sender, MessageEventArgs e)
-        {
-            var response = JsonConvert.DeserializeObject<Response>(e.Data);
-
-            if (response.Identifier == -1 || string.IsNullOrWhiteSpace(response.Message))
-                return;
-
-            Console.Write(response.Message);
-        }
-
-        private static void OnOpen(object sender, EventArgs e)
-        {
-            OnLog?.Invoke(null, "WebSocket connection opened");
-        }
-
-        #endregion
-
-        public void Dispose()
-        {
-            webSocket.Close();
-        }
-    }
-
-    class Request
-    {
-        public int Identifier;
-        public string Message;
-        public string Name;
-
-        public Request(string message, int identifier = 1, string name = "WebRcon")
-        {
-            Identifier = identifier;
-            Message = message;
-            Name = name;
-        }
-    }
-
-    class Response
-    {
-        [JsonProperty("Identifier")] public int Identifier;
-
-        [JsonProperty("Message")] public string Message;
-
-        [JsonProperty("Name")] public string Name;
     }
 }
