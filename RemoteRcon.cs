@@ -1,6 +1,6 @@
 using System;
 using System.Linq;
-using System.Threading.Tasks;
+using System.Threading;
 using Oxide.Core.Libraries.Covalence;
 using WebSocketSharp;
 
@@ -78,7 +78,7 @@ namespace Oxide.Plugins
             return string.Format(command, args);
         }
 
-        private async Task RunStoredTask(IPlayer player, string command, string[] args)
+        private void RunStoredTask(IPlayer player, string command, string[] args)
         {
             if (!player.IsServer || !player.IsAdmin)
             {
@@ -146,7 +146,7 @@ namespace Oxide.Plugins
                 }
             }
         }
-        private async Task RunExecuteTask(IPlayer player, string command, string[] args)
+        private void RunExecuteTask(IPlayer player, string command, string[] args)
         {
             if (!player.IsServer || !player.IsAdmin)
             {
@@ -189,17 +189,13 @@ namespace Oxide.Plugins
         [Command("remotercon.storedexecute"), Permission("remotercon.storedexecute")]
         void StoredExecute(IPlayer player, string command, string[] args)
         {
-            RunStoredTask(player, command, args).
-                ContinueWith(t => Puts(t.Exception.ToString()),
-                    TaskContinuationOptions.OnlyOnFaulted);
+            ThreadPool.QueueUserWorkItem(o => RunStoredTask(player, command, args));
         }
 
         [Command("remotercon.execute"), Permission("remotercon.execute")]
         void ExecuteCommand(IPlayer player, string command, string[] args)
         {
-            RunExecuteTask(player, command, args).
-                ContinueWith(t => Puts(t.Exception.ToString()),
-                    TaskContinuationOptions.OnlyOnFaulted);
+            ThreadPool.QueueUserWorkItem(o => RunExecuteTask(player, command, args));
         }
 
         private class RconPacket
