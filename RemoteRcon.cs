@@ -7,7 +7,7 @@ using WebSocketSharp;
 
 namespace Oxide.Plugins
 {
-    [Info("RemoteRcon", "Grimston", "0.0.7")]
+    [Info("RemoteRcon", "Grimston", "0.0.8")]
     [Description("API to execute remote rcon commands to other servers.")]
     class RemoteRcon : CovalencePlugin
     {
