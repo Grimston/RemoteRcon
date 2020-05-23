@@ -6,7 +6,7 @@ using WebSocketSharp;
 
 namespace Oxide.Plugins
 {
-    [Info("RemoteRcon", "Grimston", "0.0.9")]
+    [Info("RemoteRcon", "Grimston", "0.1.0")]
     [Description("API to execute remote rcon commands to other servers.")]
     class RemoteRcon : CovalencePlugin
     {
@@ -82,11 +82,6 @@ namespace Oxide.Plugins
         {
             try
             {
-                if (!player.IsServer || !player.IsAdmin)
-                {
-                    return;
-                }
-
                 if (_config.LogMessages)
                     Puts("Checking for stored command: {0}", args[0]);
 
@@ -151,11 +146,6 @@ namespace Oxide.Plugins
         {
             try
             {
-                if (!player.IsServer || !player.IsAdmin)
-                {
-                    return;
-                }
-
                 using (_webSocket =
                     new WebSocket(
                         $"ws://{args[0]}:{args[1]}/{args[2]}")
