@@ -1,34 +1,44 @@
-using System;
-using System.Linq;
 using Oxide.Core.Libraries.Covalence;
+using System;
+using System.Collections;
+using System.Linq;
+using UnityEngine;
 using WebSocketSharp;
 
 
 namespace Oxide.Plugins
 {
-    [Info("RemoteRcon", "Grimston", "0.1.0")]
-    [Description("API to execute remote rcon commands to other servers.")]
+    [Info ( "RemoteRcon", "Grimston", "0.1.1" )]
+    [Description ( "API to execute remote rcon commands to other servers." )]
     class RemoteRcon : CovalencePlugin
     {
         private WebSocket _webSocket;
         private Configuration _config;
 
-        void Init()
+        void Init ()
         {
-            _config = Config.ReadObject<Configuration>();
+            _config = Config.ReadObject<Configuration> ();
+
+            CreateBehaviour ();
+
+        }
+        void Unload ()
+        {
+            ClearBehaviour ();
         }
 
-        protected override void LoadDefaultConfig()
+
+        protected override void LoadDefaultConfig ()
         {
-            Config.WriteObject(GetDefaultConfig(), true);
+            Config.WriteObject ( GetDefaultConfig (), true );
         }
 
-        private Configuration GetDefaultConfig()
+        private Configuration GetDefaultConfig ()
         {
             return new Configuration
             {
                 LogMessages = true,
-                RemoteServers = new[]
+                RemoteServers = new []
                 {
                     new Configuration.RemoteServer()
                     {
@@ -45,7 +55,7 @@ namespace Oxide.Plugins
                         Password = "YourSuperRconPassword"
                     }
                 },
-                RemoteCommands = new[]
+                RemoteCommands = new []
                 {
                     new Configuration.RemoteCommand()
                     {
@@ -61,7 +71,7 @@ namespace Oxide.Plugins
             };
         }
 
-        private string FilterCommand(string command, string[] args)
+        private string FilterCommand ( string command, string [] args )
         {
             /**
             var regex = new Regex(@"{(.*?)}/g");
@@ -74,117 +84,136 @@ namespace Oxide.Plugins
             }
             **/
 
-            return string.Format(command, args);
+            return string.Format ( command, args );
         }
 
-        [Command("remotercon.storedexecute"), Permission("remotercon.storedexecute")]
-        void StoredExecute(IPlayer player, string command, string[] args)
+        [Command ( "remotercon.storedexecute" ), Permission ( "remotercon.storedexecute" )]
+        void StoredExecute ( IPlayer player, string command, string [] args )
         {
-            try
-            {
-                if (_config.LogMessages)
-                    Puts("Checking for stored command: {0}", args[0]);
-
-                var storedCommand = _config.RemoteCommands.First(remoteCommand => remoteCommand.CommandName == args[0]);
-
-                if (storedCommand == null) return;
-
-                if (_config.LogMessages)
-                    Puts("Command Exists, running now");
-                foreach (var storedServer in storedCommand.Servers)
-                {
-                    var identifier = 1000;
-                    var storedRemoteServer =
-                        _config.RemoteServers.First(remoteServer => remoteServer.Name == storedServer);
-
-                    using (_webSocket =
-                        new WebSocket(
-                            $"ws://{storedRemoteServer.Address}:{storedRemoteServer.Port}/{storedRemoteServer.Password}")
-                    )
-                    {
-                        _webSocket.Connect();
-
-                        var commandArguments = args.ToList();
-                        commandArguments.RemoveRange(0, 1);
-
-
-                        if (_webSocket.ReadyState == WebSocketState.Open)
-                        {
-                            foreach (var storedCommandCommand in storedCommand.Commands)
-                            {
-                                var filterCommand = Newtonsoft.Json.JsonConvert.SerializeObject(new RconPacket()
-                                {
-                                    Identifier = identifier,
-                                    Message = FilterCommand(storedCommandCommand, commandArguments.ToArray())
-                                });
-
-                                if (_config.LogMessages)
-                                    Puts("Sending: {0}", filterCommand);
-                                _webSocket.Send(filterCommand);
-
-                                identifier++;
-                            }
-                        }
-                        else
-                        {
-                            if (_config.LogMessages)
-                                Puts($"Unable to connect to server: '{storedServer}' Commands not executed.");
-                        }
-
-                        _webSocket.Close();
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Puts(e.ToString());
-            }
+            RemoteRconManagerBehaviour.StartCoroutine ( StoredExecuteRoutine ( player, command, args ) );
         }
 
-        [Command("remotercon.execute"), Permission("remotercon.execute")]
-        void ExecuteCommand(IPlayer player, string command, string[] args)
+        [Command ( "remotercon.execute" ), Permission ( "remotercon.execute" )]
+        void ExecuteCommand ( IPlayer player, string command, string [] args )
         {
-            try
+            RemoteRconManagerBehaviour.StartCoroutine ( ExecuteCommandRoutine ( player, command, args ) );
+        }
+
+        IEnumerator StoredExecuteRoutine ( IPlayer player, string command, string [] args )
+        {
+            if ( _config.LogMessages )
+                Puts ( "Checking for stored command: {0}", args [ 0 ] );
+
+            var storedCommand = _config.RemoteCommands.First ( remoteCommand => remoteCommand.CommandName == args [ 0 ] );
+
+            if ( storedCommand == null ) yield break;
+
+            if ( _config.LogMessages )
+                Puts ( "Command Exists, running now" );
+            foreach ( var storedServer in storedCommand.Servers )
             {
-                using (_webSocket =
-                    new WebSocket(
-                        $"ws://{args[0]}:{args[1]}/{args[2]}")
+                var identifier = 1000;
+                var storedRemoteServer =
+                    _config.RemoteServers.First ( remoteServer => remoteServer.Name == storedServer );
+
+                using ( _webSocket =
+                    new WebSocket (
+                        $"ws://{storedRemoteServer.Address}:{storedRemoteServer.Port}/{storedRemoteServer.Password}" )
                 )
                 {
-                    _webSocket.Connect();
+                    try { _webSocket.Connect (); } catch ( Exception e ) { Puts ( e.ToString () ); }
 
-                    var commandArguments = args.ToList();
-                    commandArguments.RemoveRange(0, 1);
+                    var commandArguments = args.ToList ();
+                    commandArguments.RemoveRange ( 0, 1 );
 
-                    if (_webSocket.ReadyState == WebSocketState.Open)
+                    if ( _webSocket.ReadyState == WebSocketState.Open )
                     {
-                        var parts = args.ToList();
-                        parts.RemoveRange(0, 3);
-
-                        var filterCommand = Newtonsoft.Json.JsonConvert.SerializeObject(new RconPacket()
+                        foreach ( var storedCommandCommand in storedCommand.Commands )
                         {
-                            Identifier = 1000,
-                            Message = string.Join(" ", parts)
-                        });
+                            var filterCommand = Newtonsoft.Json.JsonConvert.SerializeObject ( new RconPacket ()
+                            {
+                                Identifier = identifier,
+                                Message = FilterCommand ( storedCommandCommand, commandArguments.ToArray () )
+                            } );
 
-                        if (_config.LogMessages)
-                            Puts("Sending: {0}", filterCommand);
-                        _webSocket.Send(filterCommand);
+                            if ( _config.LogMessages )
+                                Puts ( "Sending: {0}", filterCommand );
+                            _webSocket.Send ( filterCommand );
+
+                            identifier++;
+                        }
                     }
                     else
                     {
-                        if (_config.LogMessages)
-                            Puts($"Unable to connect to server, commands not executed.");
+                        if ( _config.LogMessages )
+                            Puts ( $"Unable to connect to server: '{storedServer}' Commands not executed." );
                     }
 
-                    _webSocket.Close();
+                    _webSocket.Close ();
+
+                    yield return new WaitForEndOfFrame ();
                 }
-            }
-            catch (Exception e)
-            {
-                Puts(e.ToString());
+
+                yield return null;
             }
         }
+
+        IEnumerator ExecuteCommandRoutine ( IPlayer player, string command, string [] args )
+        {
+            using ( _webSocket =
+                new WebSocket (
+                    $"ws://{args [ 0 ]}:{args [ 1 ]}/{args [ 2 ]}" )
+            )
+            {
+                try { _webSocket.Connect (); } catch ( Exception e ) { Puts ( e.ToString () ); }
+
+                var commandArguments = args.ToList ();
+                commandArguments.RemoveRange ( 0, 1 );
+
+                if ( _webSocket.ReadyState == WebSocketState.Open )
+                {
+                    var parts = args.ToList ();
+                    parts.RemoveRange ( 0, 3 );
+
+                    var filterCommand = Newtonsoft.Json.JsonConvert.SerializeObject ( new RconPacket ()
+                    {
+                        Identifier = 1000,
+                        Message = string.Join ( " ", parts )
+                    } );
+
+                    if ( _config.LogMessages )
+                        Puts ( "Sending: {0}", filterCommand );
+                    _webSocket.Send ( filterCommand );
+                }
+                else
+                {
+                    if ( _config.LogMessages )
+                        Puts ( $"Unable to connect to server, commands not executed." );
+                }
+
+                _webSocket.Close ();
+
+                yield return null;
+            }
+        }
+
+        public RemoteRconManager RemoteRconManagerBehaviour { get; private set; }
+        private void CreateBehaviour ()
+        {
+            ClearBehaviour ();
+
+            var gameObject = new GameObject ( "RemoteRcon" );
+            RemoteRconManagerBehaviour = gameObject.AddComponent<RemoteRconManager> ();
+        }
+        private void ClearBehaviour ()
+        {
+            if ( RemoteRconManagerBehaviour != null )
+            {
+                UnityEngine.Object.Destroy ( RemoteRconManagerBehaviour.gameObject );
+            }
+        }
+
+        public class RemoteRconManager : MonoBehaviour { }
 
         private class RconPacket
         {
@@ -198,8 +227,8 @@ namespace Oxide.Plugins
             internal class RemoteCommand
             {
                 public string CommandName;
-                public string[] Servers;
-                public string[] Commands;
+                public string [] Servers;
+                public string [] Commands;
             }
 
             internal class RemoteServer
@@ -211,8 +240,8 @@ namespace Oxide.Plugins
             }
 
             public bool LogMessages;
-            public RemoteServer[] RemoteServers;
-            public RemoteCommand[] RemoteCommands;
+            public RemoteServer [] RemoteServers;
+            public RemoteCommand [] RemoteCommands;
         }
     }
 }
